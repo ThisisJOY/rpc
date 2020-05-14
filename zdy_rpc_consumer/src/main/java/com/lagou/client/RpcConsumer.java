@@ -1,95 +1,103 @@
 package com.lagou.client;
 
-import com.lagou.service.JSONSerializer;
-import com.lagou.service.RpcEncoder;
+import com.lagou.service.NodeChangeListener;
+import com.lagou.service.RpcRegistryHandler;
 import com.lagou.service.RpcRequest;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.string.StringDecoder;
+import org.apache.curator.framework.recipes.cache.PathChildrenCacheEvent;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
-public class RpcConsumer {
+public class RpcConsumer implements NodeChangeListener {
 
-    //创建线程池对象
-    private static ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    private RpcRegistryHandler rpcRegistryHandler;
+    private List<RpcClient> rpcClients = new ArrayList<>();
 
-    private static UserClientHandler userClientHandler;
+    public RpcConsumer(RpcRegistryHandler rpcRegistryHandler) throws Exception {
+        this.rpcRegistryHandler = rpcRegistryHandler;
+        final List<String> serviceList = rpcRegistryHandler.discover();
+        for (int i = 0; i < serviceList.size(); i++) {
+            String s = serviceList.get(i);
+            // 127.0.0.1:8990
+            final String hostName = s.substring(0, s.lastIndexOf(":"));
+            final String port = s.substring(s.lastIndexOf(":") + 1);
+            final RpcClient rpcClient = new RpcClient(hostName, Integer.parseInt(port));
+            rpcClient.initClient();
+            rpcClients.add(rpcClient);
+        }
+        rpcRegistryHandler.addListener(this);
+    }
 
-    //1.创建一个代理对象
+    public RpcRegistryHandler getRpcRegistryHandler() {
+        return rpcRegistryHandler;
+    }
+
+    //创建一个代理对象
     public Object createProxy(final Class<?> serviceClass) {
         //借助JDK动态代理生成代理对象
-        return Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(), new Class<?>[]{serviceClass}, new InvocationHandler() {
-            public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                //（1）调用初始化netty客户端的方法
+        return Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(), new Class<?>[]{serviceClass},
+                new InvocationHandler() {
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 
-                if (userClientHandler == null) {
-                    initClient();
-                }
+                        //封装
+                        RpcRequest request = new RpcRequest();
+                        final String requestId = UUID.randomUUID().toString();
+                        final String className = method.getDeclaringClass().getName();
+                        final String methodName = method.getName();
+                        final Class<?>[] parameterTypes = method.getParameterTypes();
 
-                //封装
-                RpcRequest request = new RpcRequest();
-                final String requestId = UUID.randomUUID().toString();
-                System.out.println(requestId);
+                        request.setRequestId(requestId);
+                        request.setClassName(className);
+                        request.setMethodName(methodName);
+                        request.setParameterTypes(parameterTypes);
+                        request.setParameters(args);
 
-                final String className = method.getDeclaringClass().getName();
-                final String methodName = method.getName();
-                final Class<?>[] parameterTypes = method.getParameterTypes();
+                        System.out.println("请求内容：" + request);
 
-                request.setRequestId(requestId);
-                request.setClassName(className);
-                request.setMethodName(methodName);
-                request.setParameterTypes(parameterTypes);
-                request.setParameters(args);
-
-                // 设置参数
-                userClientHandler.setPara(request);
-                System.out.println(request);
-                System.out.println("设置参数完成");
-
-                // 去服务端请求数据
-
-                return executor.submit(userClientHandler).get();
-            }
-        });
-
-
-    }
-
-
-    //2.初始化netty客户端
-    public static void initClient() throws InterruptedException {
-        userClientHandler = new UserClientHandler();
-
-        EventLoopGroup group = new NioEventLoopGroup();
-
-        Bootstrap bootstrap = new Bootstrap();
-        bootstrap.group(group)
-                .channel(NioSocketChannel.class)
-                .option(ChannelOption.TCP_NODELAY, true)
-                .handler(new ChannelInitializer<SocketChannel>() {
-                    protected void initChannel(SocketChannel ch) throws Exception {
-                        ChannelPipeline pipeline = ch.pipeline();
-                        pipeline.addLast(new RpcEncoder(RpcRequest.class, new JSONSerializer()));
-                        pipeline.addLast(new StringDecoder());
-                        pipeline.addLast(userClientHandler);
+                        //去服务端请求数据
+                        if (!rpcClients.isEmpty()) {
+                            RpcClient rpcClient = rpcClients.get(0);
+                            rpcClient.send(request);
+                        }
+                        return null;
                     }
                 });
-
-        bootstrap.connect("127.0.0.1", 8990).sync();
-
     }
 
+    @Override
+    public void notify(List<String> serviceList, PathChildrenCacheEvent event) throws InterruptedException {
+        final PathChildrenCacheEvent.Type eventType = event.getType();
+        final String path = event.getData().getPath();
+        final String instance = path.substring(path.lastIndexOf("/") + 1);
+        String[] address = instance.split(":");
 
+        switch (eventType) {
+            case CHILD_ADDED:
+            case CONNECTION_RECONNECTED:
+                final RpcClient rpcClient = new RpcClient(address[0], Integer.parseInt(address[1]));
+                rpcClient.initClient();
+                System.out.println("增加节点：" + instance);
+                rpcClients.add(rpcClient);
+                break;
+            case CHILD_REMOVED:
+            case CONNECTION_SUSPENDED:
+            case CONNECTION_LOST:
+                if (!rpcClients.isEmpty()) {
+                    for (RpcClient item : rpcClients) {
+                        if (item.getIp().equalsIgnoreCase(address[0]) && Integer.parseInt(address[1]) == item.getPort()) {
+                            rpcClients.remove(item);
+                            System.out.println("移除节点：" + instance);
+                        }
+
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+    }
 }

@@ -17,7 +17,7 @@ public class RpcDecoder extends ByteToMessageDecoder {
 
     @Override
     protected void decode(ChannelHandlerContext channelHandlerContext, ByteBuf byteBuf, List<Object> list) throws Exception {
-        if(byteBuf.readableBytes() < 4) {
+        if (byteBuf.readableBytes() < 4) {
             return;
         }
 
@@ -25,7 +25,7 @@ public class RpcDecoder extends ByteToMessageDecoder {
 
         final int dataLength = byteBuf.readInt();
 
-        if(byteBuf.readableBytes() < dataLength) {
+        if (byteBuf.readableBytes() < dataLength) {
             byteBuf.resetReaderIndex();
             return;
         }

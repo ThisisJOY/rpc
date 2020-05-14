@@ -13,13 +13,13 @@ import org.springframework.stereotype.Component;
 import java.lang.reflect.InvocationTargetException;
 
 @Component
-public class UserServerHandler extends ChannelInboundHandlerAdapter implements ApplicationContextAware {
+public class RpcServerHandler extends ChannelInboundHandlerAdapter implements ApplicationContextAware {
 
     private static ApplicationContext applicationContext;
 
     @Override
     public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
-        UserServerHandler.applicationContext = applicationContext;
+        RpcServerHandler.applicationContext = applicationContext;
     }
 
     @Override
@@ -44,13 +44,12 @@ public class UserServerHandler extends ChannelInboundHandlerAdapter implements A
     private Object handler(RpcRequest request) throws ClassNotFoundException, InvocationTargetException {
         final Class<?> clazz = Class.forName(request.getClassName());
         final Object serviceBean = applicationContext.getBean(clazz);
-        final Class<?> serviceClass = serviceBean.getClass();
 
         final String methodName = request.getMethodName();
         final Object[] parameters = request.getParameters();
         final Class<?>[] parameterTypes = request.getParameterTypes();
 
-        final FastClass fastClass = FastClass.create(serviceClass);
+        final FastClass fastClass = FastClass.create(clazz);
         final FastMethod fastMethod = fastClass.getMethod(methodName, parameterTypes);
 
         return fastMethod.invoke(serviceBean, parameters);

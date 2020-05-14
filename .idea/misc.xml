@@ -6,6 +6,7 @@
         <option value="$PROJECT_DIR$/zdy_rpc_common/pom.xml" />
         <option value="$PROJECT_DIR$/zdy_rpc_provider/pom.xml" />
         <option value="$PROJECT_DIR$/zdy_rpc_consumer/pom.xml" />
+        <option value="$PROJECT_DIR$/zdy_rpc_registry/pom.xml" />
       </list>
     </option>
   </component>

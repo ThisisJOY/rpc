@@ -5,7 +5,7 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 
 import java.util.concurrent.Callable;
 
-public class UserClientHandler extends ChannelInboundHandlerAdapter implements Callable {
+public class RpcClientHandler extends ChannelInboundHandlerAdapter implements Callable {
 
     private ChannelHandlerContext context;
     private String result;
